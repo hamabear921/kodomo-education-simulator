@@ -7,7 +7,7 @@ for(const file of ['assumptions.js','simulator.js'])vm.runInContext(fs.readFileS
 const assumptions=context.window.EducationAssumptions;
 const simulator=context.window.EducationSimulator;
 const {presets,educationCosts,UNIVERSITY_AWAY_ANNUAL}=assumptions;
-const {clone,defaults,matchingPreset,schoolRecords,calculate,migrate}=simulator;
+const {clone,createChild,defaults,matchingPreset,schoolRecords,calculate,migrate}=simulator;
 const plain=value=>JSON.parse(JSON.stringify(value));
 
 function modelAtCurrentPrices(){const model=defaults();model.common.inflation=0;model.benefits.highSupport=false;return model}
@@ -26,7 +26,20 @@ for(const [key,paths] of Object.entries(expectedPresets)){
 assert.equal(matchingPreset({el:'private',j:'public',h:'private'}),null);
 
 {
-  const model=modelAtCurrentPrices(),first=model.children[0],second=clone(model.children[1]);
+  const fresh=defaults();
+  assert.equal(fresh.children.length,1);assert.equal(fresh.children[0].birth,'');
+  assert.equal(fresh.setupComplete,false);assert.equal(fresh.setupStep,0);
+  fresh.setupStep=2;
+  const draft=migrate(fresh);
+  assert.equal(draft.setupComplete,false);assert.equal(draft.setupStep,2);assert.equal(draft.children[0].birth,'');
+  const legacy=defaults();legacy.children[0].birth='2023-12-01';legacy.page='investment';delete legacy.setupComplete;delete legacy.setupStep;
+  const migratedLegacy=migrate(legacy);
+  assert.equal(migratedLegacy.setupComplete,true);assert.equal(migratedLegacy.page,'dashboard');
+}
+
+{
+  const model=modelAtCurrentPrices();model.children.push(createChild('2026-09-01','お子さま 2'));
+  const first=model.children[0],second=clone(model.children[1]);
   first.paths.u='privateScience';first.paths.home='away';first.paths.years=6;
   Object.assign(first.paths,presets.highPrivate.paths);
   assert.deepEqual({el:first.paths.el,j:first.paths.j,h:first.paths.h},expectedPresets.highPrivate);
@@ -108,21 +121,31 @@ function renderApp(saved){
 }
 
 {
-  const educationModel=defaults();educationModel.page='education';
+  const app=renderApp(defaults());app.click({action:'setup-next'});
+  assert.equal(app.state.setupStep,0);assert.equal(app.state.setupComplete,false);
+  assert.ok(app.html.includes('生年月日を選択してください。'));
+  const invalid=defaults();invalid.setupStep=2;invalid.children[0].birth='2023-12-01';invalid.children[0].investment.base=-1000;
+  const finish=renderApp(invalid);finish.click({action:'setup-next'});
+  assert.equal(finish.state.setupComplete,false);
+  assert.ok(finish.html.includes('月額は0〜100万円で入力してください。'));
+}
+
+{
+  const educationModel=defaults();educationModel.setupComplete=true;educationModel.children[0].birth='2023-12-01';educationModel.children.push(createChild('2026-09-01','お子さま 2'));
   educationModel.children[0].paths.u='privateScience';educationModel.children[0].paths.home='away';educationModel.children[0].paths.years=6;
-  const app=renderApp(educationModel),html=app.html;
-  for(const label of ['小中高 公立','高校から私立','中学から私立','小学校から私立','中学受験','高校受験','大学受験','年間学校費'])assert.ok(html.includes(label));
+  const app=renderApp(educationModel);app.click({page:'education'});const html=app.html;
+  for(const label of ['小中高 公立','高校から私立','中学から私立','小学校から私立','中学受験','高校受験','大学受験','年間学校費'])assert.ok(html.includes(label),label);
   assert.ok(html.includes('data-preset="allPublic"'));
   assert.ok(html.includes('data-child-bind="0.examModes.middle"'));
   assert.ok(html.includes('data-action="show-cost-presets"'));
-  assert.ok(html.includes('サイトで設定している平均教育費'));
+  assert.ok(html.includes('教育費の基準額'));
   for(const amount of ['9.5万円','97万円','13.5万円','101.8万円','33.3万円','75.2万円','53.6万円','99.2万円','135.7万円','120万円'])assert.ok(html.includes(amount));
   for(const total of ['223.1万円','1,055.4万円','165.5万円','471.3万円','182.2万円','357.2万円','282.5万円','293.4万円','458.8万円','607.3万円'])assert.ok(html.includes(total));
   assert.ok(html.includes('<th>小学校</th><td>公立</td><td class="preset-total-cell">'));
   assert.ok(html.includes('修業期間の総額'));
   assert.ok(!html.includes('cost-total-grid'));
   for(const source of ['令和5年度 子供の学習費調査','公立大学基礎データ','私立大学等の学生納付金等調査','学生生活調査','計画用プリセット'])assert.ok(html.includes(source));
-  assert.ok(html.includes('選択した受験期は、通常の塾費を受験期の塾費に置き換えます。'));
+  assert.ok(html.includes('受験を選ぶと、その期間の塾費へ置き換えます。'));
   assert.ok(!html.includes('受験モード'));
   for(const years of ['6年間','3年間','4年間'])assert.ok(html.includes(years));
   app.click({action:'show-cost-presets'});assert.equal(app.dialogOpen,true);
@@ -142,10 +165,11 @@ function renderApp(saved){
 }
 
 {
-  const html=renderApp(defaults()).html;
+  const model=defaults();model.setupComplete=true;model.children[0].birth='2023-12-01';
+  const html=renderApp(model).html;
   assert.ok(html.includes('class="trend-chart"'));
   assert.ok(html.includes('年ごとの内訳'));
-  assert.ok(html.includes('教育費総額'));
+  assert.ok(html.includes('大学入学前の準備見込み'));
 }
 
 console.log('教育費プリセット・進路・受験期の塾費・CF計算のテストに合格しました。');
